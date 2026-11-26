@@ -1,8 +1,14 @@
-import { useState } from 'react'
+
+import { useState, useRef } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useStore } from '../hooks/useStore.js'
 import { formatearPrecio } from '../data/productos.js'
 import { imagenes } from '../data/imagenes.js'
 import Imagen from '../components/Imagen.jsx'
+import {
+  cerrarSesion,
+  estaAutenticado
+} from '../services/authService.js'
 import './Admin.css'
 
 const productoVacio = {
@@ -16,47 +22,35 @@ const productoVacio = {
 }
 
 export default function Admin() {
+  const navigate = useNavigate()
+  const formularioRef = useRef(null)
+
   const {
     productos,
     guardarProductoAPI,
     eliminarProductoAPI
   } = useStore()
 
-  const [autorizado, setAutorizado] = useState(
-    () => sessionStorage.getItem('vsm-admin-demo') === 'si'
-  )
-
-  const [credenciales, setCredenciales] = useState({
-    usuario: '',
-    clave: '',
-  })
-
   const [formulario, setFormulario] = useState(productoVacio)
   const [mensaje, setMensaje] = useState('')
   const [procesando, setProcesando] = useState(false)
 
-  function ingresar(evento) {
-    evento.preventDefault()
+  const autorizado =
+    estaAutenticado() &&
+    localStorage.getItem('rol') === 'ADMIN'
 
-    const credencialesCorrectas =
-      credenciales.usuario.trim().toLowerCase() === 'admin' &&
-      credenciales.clave.trim() === 'admin123'
-
-    if (!credencialesCorrectas) {
-      setMensaje('Usuario o contraseña incorrectos.')
-      return
-    }
-
-    sessionStorage.setItem('vsm-admin-demo', 'si')
-    setMensaje('')
-    setAutorizado(true)
+  function cambiarCampo(campo, valor) {
+    setFormulario(anterior => ({
+      ...anterior,
+      [campo]: valor
+    }))
   }
 
   async function guardarProducto(evento) {
     evento.preventDefault()
 
     const codigoDuplicado = productos.some(
-      (producto) =>
+      producto =>
         producto.id === formulario.id.trim() &&
         producto.id !== formulario.idOriginal
     )
@@ -85,8 +79,13 @@ export default function Admin() {
         formulario.idOriginal
       )
 
+      setMensaje(
+        formulario.idOriginal
+          ? 'Producto actualizado correctamente en MongoDB.'
+          : 'Producto guardado correctamente en MongoDB.'
+      )
+
       setFormulario(productoVacio)
-      setMensaje('Producto guardado correctamente en MongoDB.')
 
     } catch (error) {
       setMensaje('Error al guardar el producto: ' + error.message)
@@ -97,11 +96,26 @@ export default function Admin() {
 
   function editarProducto(producto) {
     setFormulario({
-      ...producto,
+      id: producto.id,
+      nombre: producto.nombre ?? '',
+      categoria: producto.categoria ?? '',
+      precio: producto.precio ?? '',
+      stock: producto.stock ?? 0,
       stockCritico: producto.stockCritico ?? 5,
+      descripcion: producto.descripcion ?? '',
       idOriginal: producto.id
     })
 
+    setMensaje('Editando producto: ' + producto.nombre)
+
+    formularioRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    })
+  }
+
+  function cancelarEdicion() {
+    setFormulario(productoVacio)
     setMensaje('')
   }
 
@@ -123,6 +137,12 @@ export default function Admin() {
       }
 
       setMensaje('Producto eliminado correctamente de MongoDB.')
+
+      formularioRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      })
+
     } catch (error) {
       setMensaje('Error al eliminar: ' + error.message)
     } finally {
@@ -130,66 +150,14 @@ export default function Admin() {
     }
   }
 
-  function cerrarSesion() {
+  function salir() {
+    cerrarSesion()
     sessionStorage.removeItem('vsm-admin-demo')
-    setAutorizado(false)
-    setCredenciales({ usuario: '', clave: '' })
-    setMensaje('')
+    navigate('/login', { replace: true })
   }
 
   if (!autorizado) {
-    return (
-      <div className="v-pagina">
-        <section className="form-tarjeta">
-          <h1>Administración</h1>
-
-          <p className="form-ayuda">
-            Acceso académico de demostración.
-          </p>
-
-          <form onSubmit={ingresar} autoComplete="off">
-            <label>
-              Usuario
-              <input
-                required
-                value={credenciales.usuario}
-                onChange={(evento) =>
-                  setCredenciales({
-                    ...credenciales,
-                    usuario: evento.target.value
-                  })
-                }
-              />
-            </label>
-
-            <label>
-              Contraseña
-              <input
-                required
-                type="password"
-                value={credenciales.clave}
-                onChange={(evento) =>
-                  setCredenciales({
-                    ...credenciales,
-                    clave: evento.target.value
-                  })
-                }
-              />
-            </label>
-
-            {mensaje && <p role="alert">{mensaje}</p>}
-
-            <button className="v-boton" type="submit">
-              Ingresar
-            </button>
-          </form>
-
-          <p className="form-ayuda">
-            Usuario: admin · Clave: admin123
-          </p>
-        </section>
-      </div>
-    )
+    return <Navigate to="/login" replace />
   }
 
   return (
@@ -199,17 +167,20 @@ export default function Admin() {
         <div>
           <h1>Administrar productos</h1>
           <p>Catálogo conectado con MongoDB Atlas.</p>
+          <p>Sesión: {localStorage.getItem('email')}</p>
         </div>
 
         <button
+          type="button"
           className="v-boton v-boton-secundario"
-          onClick={cerrarSesion}
+          onClick={salir}
         >
           Cerrar sesión
         </button>
       </header>
 
       <form
+        ref={formularioRef}
         className="admin-form"
         onSubmit={guardarProducto}
       >
@@ -227,11 +198,8 @@ export default function Admin() {
               required
               disabled={Boolean(formulario.idOriginal)}
               value={formulario.id}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  id: evento.target.value.toUpperCase()
-                })
+              onChange={e =>
+                cambiarCampo('id', e.target.value.toUpperCase())
               }
             />
           </label>
@@ -242,11 +210,8 @@ export default function Admin() {
               required
               maxLength="100"
               value={formulario.nombre}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  nombre: evento.target.value
-                })
+              onChange={e =>
+                cambiarCampo('nombre', e.target.value)
               }
             />
           </label>
@@ -256,11 +221,8 @@ export default function Admin() {
             <input
               required
               value={formulario.categoria}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  categoria: evento.target.value
-                })
+              onChange={e =>
+                cambiarCampo('categoria', e.target.value)
               }
             />
           </label>
@@ -273,11 +235,8 @@ export default function Admin() {
               min="1"
               step="1"
               value={formulario.precio}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  precio: evento.target.value
-                })
+              onChange={e =>
+                cambiarCampo('precio', e.target.value)
               }
             />
           </label>
@@ -290,11 +249,8 @@ export default function Admin() {
               min="0"
               step="1"
               value={formulario.stock}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  stock: evento.target.value
-                })
+              onChange={e =>
+                cambiarCampo('stock', e.target.value)
               }
             />
           </label>
@@ -306,13 +262,9 @@ export default function Admin() {
               type="number"
               min="0"
               step="1"
-              disabled={Boolean(formulario.idOriginal)}
               value={formulario.stockCritico}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  stockCritico: evento.target.value
-                })
+              onChange={e =>
+                cambiarCampo('stockCritico', e.target.value)
               }
             />
           </label>
@@ -323,11 +275,8 @@ export default function Admin() {
               required
               maxLength="300"
               value={formulario.descripcion}
-              onChange={(evento) =>
-                setFormulario({
-                  ...formulario,
-                  descripcion: evento.target.value
-                })
+              onChange={e =>
+                cambiarCampo('descripcion', e.target.value)
               }
             />
           </label>
@@ -341,14 +290,19 @@ export default function Admin() {
           type="submit"
           disabled={procesando}
         >
-          {procesando ? 'Procesando...' : 'Guardar producto'}
+          {procesando
+            ? 'Procesando...'
+            : formulario.idOriginal
+              ? 'Guardar cambios'
+              : 'Guardar producto'}
         </button>
 
         {formulario.idOriginal && (
           <button
             className="v-boton v-boton-secundario ms-2"
             type="button"
-            onClick={() => setFormulario(productoVacio)}
+            disabled={procesando}
+            onClick={cancelarEdicion}
           >
             Cancelar
           </button>
@@ -360,7 +314,7 @@ export default function Admin() {
 
       <div className="admin-lista">
 
-        {productos.map((producto) => (
+        {productos.map(producto => (
           <article
             className="admin-producto"
             key={producto.id}
@@ -381,7 +335,7 @@ export default function Admin() {
 
                 <p>
                   {producto.id} · {producto.categoria} ·{' '}
-                  {formatearPrecio(producto.precio)} ·
+                  {formatearPrecio(producto.precio)} ·{' '}
                   Stock {producto.stock}
                 </p>
 
@@ -397,6 +351,7 @@ export default function Admin() {
             <div className="admin-acciones">
 
               <button
+                type="button"
                 className="v-boton v-boton-secundario"
                 disabled={procesando}
                 onClick={() => editarProducto(producto)}
@@ -405,6 +360,7 @@ export default function Admin() {
               </button>
 
               <button
+                type="button"
                 className="v-boton v-boton-secundario"
                 disabled={procesando}
                 onClick={() => eliminarProducto(producto.id)}
@@ -419,7 +375,7 @@ export default function Admin() {
       </div>
 
       <p className="form-ayuda">
-        Acceso académico de demostración.
+        Panel de administración con autenticación JWT.
       </p>
 
     </div>
